@@ -1,18 +1,19 @@
 #!/bin/bash
 
-LOGS_DIR="logs/combined"
+DEST_ROOT="${1:-logs}"
+LOGS_DIR="$DEST_ROOT/combined"
 mkdir -p "$LOGS_DIR"
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 SESSION_FILE="$LOGS_DIR/combined_stress_${TIMESTAMP}.log"
-TEMP_FILE="logs/temp/temp_${TIMESTAMP}.csv"
-POWER_FILE="logs/power/power_${TIMESTAMP}.csv"
-METRICS_FILE="logs/cpu/cpu_metrics_${TIMESTAMP}.csv"
+TEMP_FILE="$DEST_ROOT/temp/temp_${TIMESTAMP}.csv"
+POWER_FILE="$DEST_ROOT/power/power_${TIMESTAMP}.csv"
+METRICS_FILE="$DEST_ROOT/cpu/cpu_metrics_${TIMESTAMP}.csv"
 STAGE_FILE="/tmp/current_stage_${TIMESTAMP}.txt"
 JOURNAL_FILE="$LOGS_DIR/journal_${TIMESTAMP}.log"
 WATCHDOG_FILE="$LOGS_DIR/watchdog_${TIMESTAMP}.csv"
 THERMAL_FILE="$LOGS_DIR/thermal_${TIMESTAMP}.csv"
 
-mkdir -p logs/temp logs/power logs/cpu
+mkdir -p "$DEST_ROOT/temp" "$DEST_ROOT/power" "$DEST_ROOT/cpu"
 
 echo "combined_cpu_gpu" > "$STAGE_FILE"
 sync
@@ -191,19 +192,27 @@ echo "Combined CPU+GPU Stress | Logging to: $SESSION_FILE"
 echo "Started: $(date)" | tee "$SESSION_FILE"
 sync "$SESSION_FILE"
 
-# Start GPU stress in Docker in background
-echo "Starting GPU stress in Docker..." | tee -a "$SESSION_FILE"
+# Start GPU stress locally in background
+echo "Starting local GPU stress (dlprim_flops)..." | tee -a "$SESSION_FILE"
 sync "$SESSION_FILE"
 
-sudo docker run -d \
-    --name gpu_stress_${TIMESTAMP} \
-    --privileged \
-    --user root \
-    -v /home/ubuntu:/host \
-    ghcr.io/kastnerrg/cse160-opencl:gpu-adreno \
-    /bin/bash -c "source /usr/lib/qcom-adreno/qcom-adreno-vars.sh && while true; do dlprim_flops 0:0; done"
+(
+    # qcom-adreno-vars.sh may not exist in all runtime images.
+    if [ -f /usr/lib/qcom-adreno/qcom-adreno-vars.sh ]; then
+        # shellcheck disable=SC1091
+        source /usr/lib/qcom-adreno/qcom-adreno-vars.sh
+    fi
 
-echo "Waiting for Docker to initialize..." | tee -a "$SESSION_FILE"
+    while true; do
+        dlprim_flops 0:0
+    done
+) 2>&1 | while IFS= read -r line; do
+    echo "[dlprim_flops] $line" >> "$SESSION_FILE"
+    sync "$SESSION_FILE"
+done &
+GPU_PID=$!
+
+echo "Waiting for local GPU stress to initialize..." | tee -a "$SESSION_FILE"
 sync "$SESSION_FILE"
 sleep 5
 
@@ -224,8 +233,7 @@ echo "CPU stress completed: $(date)" | tee -a "$SESSION_FILE"
 sync "$SESSION_FILE"
 
 # Stop everything
-sudo docker stop gpu_stress_${TIMESTAMP} 2>/dev/null
-sudo docker rm gpu_stress_${TIMESTAMP} 2>/dev/null
+kill $GPU_PID 2>/dev/null
 
 echo "Completed: $(date)" | tee -a "$SESSION_FILE"
 sync "$SESSION_FILE"
