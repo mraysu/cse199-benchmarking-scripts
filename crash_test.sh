@@ -18,6 +18,12 @@ mkdir -p "$DEST_ROOT/temp" "$DEST_ROOT/power" "$DEST_ROOT/cpu"
 echo "combined_cpu_gpu" > "$STAGE_FILE"
 sync
 
+if command -v dl_prim >/dev/null 2>&1; then
+    echo "Found dl_prim binary: $(command -v dl_prim)"
+else
+    echo "dl_prim binary not found in PATH"
+fi
+
 # Start background loggers
 ./temp_benchmark.sh "$TEMP_FILE" "$STAGE_FILE" &
 TEMP_PID=$!
